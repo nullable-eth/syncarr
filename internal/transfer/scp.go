@@ -30,8 +30,8 @@ type SCPTransfer struct {
 	maxConcurrent     int // Maximum concurrent transfers
 }
 
-// NewSCPTransfer creates a new SCP transfer instance
-func NewSCPTransfer(cfg *config.Config, log *logger.Logger) (*SCPTransfer, error) {
+// newSCPTransfer creates a new SCP transfer instance (package-private)
+func newSCPTransfer(cfg *config.Config, log *logger.Logger) (*SCPTransfer, error) {
 	transfer := &SCPTransfer{
 		sshConfig:         &cfg.SSH,
 		serverConfig:      &cfg.Destination,
@@ -115,33 +115,13 @@ func (s *SCPTransfer) Close() error {
 	return nil
 }
 
-// TransferFile transfers a single file from source to destination
-func (s *SCPTransfer) TransferFile(sourcePath, destPath string) error {
-	startTime := time.Now()
-
+// doTransferFile transfers a single file from source to destination (internal implementation without common logic)
+func (s *SCPTransfer) doTransferFile(sourcePath, destPath string) error {
 	// Get source file info first
 	fileInfo, err := os.Stat(sourcePath)
 	if err != nil {
 		return fmt.Errorf("failed to stat source file: %w", err)
 	}
-
-	// Check if destination file already exists
-	destExists, err := s.FileExists(destPath)
-	if err != nil {
-		s.logger.WithError(err).WithField("dest_path", destPath).Warn("Failed to check if destination file exists, proceeding with transfer")
-	} else if destExists {
-		// Check if sizes match - if so, skip transfer entirely
-		destSize, err := s.GetFileSize(destPath)
-		if err != nil {
-			s.logger.WithError(err).WithField("dest_path", destPath).Warn("Failed to get destination file size, proceeding with transfer")
-		} else if destSize == fileInfo.Size() {
-			// Files are the same size, return early without any transfer logging
-			return nil
-		}
-	}
-
-	// If we get here, we're actually going to transfer the file
-	s.logger.LogTransferStarted(sourcePath, destPath, fileInfo.Size())
 
 	// Create destination directory if it doesn't exist
 	// Use forward slashes for remote paths (SFTP always uses Unix-style paths)
@@ -245,10 +225,12 @@ func (s *SCPTransfer) TransferFile(sourcePath, destPath string) error {
 			fileInfo.Size(), bytesTransferred)
 	}
 
-	duration := time.Since(startTime)
-	s.logger.LogTransferCompleted(sourcePath, destPath, bytesTransferred, duration)
-
 	return nil
+}
+
+// TransferFile implements Phase 2: Single File Transfer (public interface for backward compatibility)
+func (s *SCPTransfer) TransferFile(sourcePath, destPath string) error {
+	return s.doTransferFile(sourcePath, destPath)
 }
 
 // TransferItemFiles implements Phase 3: Directory-Based File Transfer
@@ -299,10 +281,10 @@ func (s *SCPTransfer) TransferItemFiles(item *types.SyncableItem) error {
 	return nil
 }
 
-// TransferFiles transfers multiple files (legacy method, kept for compatibility)
-func (s *SCPTransfer) TransferFiles(files []types.FileTransfer) error {
+// doTransferFiles transfers multiple files (internal implementation)
+func (s *SCPTransfer) doTransferFiles(files []types.FileTransfer) error {
 	for _, file := range files {
-		if err := s.TransferFile(file.SourcePath, file.DestPath); err != nil {
+		if err := s.doTransferFile(file.SourcePath, file.DestPath); err != nil {
 			s.logger.LogError(err, map[string]interface{}{
 				"source_path": file.SourcePath,
 				"dest_path":   file.DestPath,
@@ -311,6 +293,40 @@ func (s *SCPTransfer) TransferFiles(files []types.FileTransfer) error {
 		}
 	}
 	return nil
+}
+
+// TransferFiles transfers multiple files (public interface for backward compatibility)
+func (s *SCPTransfer) TransferFiles(files []types.FileTransfer) error {
+	return s.doTransferFiles(files)
+}
+
+// Internal interface methods (lowercase for internalTransferer interface)
+func (s *SCPTransfer) fileExists(path string) (bool, error) {
+	return s.FileExists(path)
+}
+
+func (s *SCPTransfer) getFileSize(path string) (int64, error) {
+	return s.GetFileSize(path)
+}
+
+func (s *SCPTransfer) deleteFile(path string) error {
+	return s.DeleteFile(path)
+}
+
+func (s *SCPTransfer) listDirectoryContents(rootPath string) ([]string, error) {
+	return s.ListDirectoryContents(rootPath)
+}
+
+func (s *SCPTransfer) mapSourcePathToLocal(sourcePath string) (string, error) {
+	return s.MapSourcePathToLocal(sourcePath)
+}
+
+func (s *SCPTransfer) mapLocalPathToDest(localPath string) (string, error) {
+	return s.MapLocalPathToDest(localPath)
+}
+
+func (s *SCPTransfer) close() error {
+	return s.Close()
 }
 
 // TransferFilesParallel transfers multiple files in parallel for better performance
