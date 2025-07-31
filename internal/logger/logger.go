@@ -85,6 +85,17 @@ func (l *Logger) LogTransferCompleted(sourcePath, destPath string, sizeBytes int
 	}).Info("File transfer completed")
 }
 
+// LogTransferSkipped logs when a file transfer is skipped (file already exists)
+func (l *Logger) LogTransferSkipped(sourcePath, destPath string, sizeBytes int64, reason string) {
+	l.WithFields(logrus.Fields{
+		"event":       "transfer_skipped",
+		"source_path": sourcePath,
+		"dest_path":   destPath,
+		"size_bytes":  sizeBytes,
+		"reason":      reason,
+	}).Debug("File transfer skipped")
+}
+
 // LogError logs an error with context
 func (l *Logger) LogError(err error, context map[string]interface{}) {
 	fields := logrus.Fields{

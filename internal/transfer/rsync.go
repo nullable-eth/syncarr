@@ -1,3 +1,4 @@
+// Package transfer provides file transfer implementations for syncarr.
 package transfer
 
 import (
@@ -6,7 +7,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/nullable-eth/syncarr/internal/config"
 	"github.com/nullable-eth/syncarr/internal/logger"
@@ -26,8 +26,8 @@ type RsyncTransfer struct {
 	checksumSkip      bool // Skip checksum verification for speed
 }
 
-// NewRsyncTransfer creates a new rsync transfer instance
-func NewRsyncTransfer(cfg *config.Config, log *logger.Logger) (*RsyncTransfer, error) {
+// newRsyncTransfer creates a new rsync transfer instance (package-private)
+func newRsyncTransfer(cfg *config.Config, log *logger.Logger) (*RsyncTransfer, error) {
 	return &RsyncTransfer{
 		sshConfig:         &cfg.SSH,
 		serverConfig:      &cfg.Destination,
@@ -41,19 +41,8 @@ func NewRsyncTransfer(cfg *config.Config, log *logger.Logger) (*RsyncTransfer, e
 	}, nil
 }
 
-// TransferFile transfers a single file using rsync
-func (r *RsyncTransfer) TransferFile(sourcePath, destPath string) error {
-	startTime := time.Now()
-
-	// Get source file info
-	fileInfo, err := os.Stat(sourcePath)
-	if err != nil {
-		return fmt.Errorf("failed to stat source file: %w", err)
-	}
-
-	// Log transfer start
-	r.logger.LogTransferStarted(sourcePath, destPath, fileInfo.Size())
-
+// doTransferFile transfers a single file using rsync (internal implementation without common logic)
+func (r *RsyncTransfer) doTransferFile(sourcePath, destPath string) error {
 	// Ensure destination directory exists
 	if err := r.ensureDestinationDir(destPath); err != nil {
 		return fmt.Errorf("failed to create destination directory: %w", err)
@@ -76,18 +65,20 @@ func (r *RsyncTransfer) TransferFile(sourcePath, destPath string) error {
 		return fmt.Errorf("rsync failed: %w", err)
 	}
 
-	duration := time.Since(startTime)
-	r.logger.LogTransferCompleted(sourcePath, destPath, fileInfo.Size(), duration)
-
 	return nil
 }
 
-// TransferFiles transfers multiple files using rsync (can batch for efficiency)
-func (r *RsyncTransfer) TransferFiles(files []types.FileTransfer) error {
+// TransferFile transfers a single file using rsync (public interface for backward compatibility)
+func (r *RsyncTransfer) TransferFile(sourcePath, destPath string) error {
+	return r.doTransferFile(sourcePath, destPath)
+}
+
+// doTransferFiles transfers multiple files using rsync (internal implementation)
+func (r *RsyncTransfer) doTransferFiles(files []types.FileTransfer) error {
 	// For small numbers of files, transfer individually
 	if len(files) <= 3 {
 		for _, file := range files {
-			if err := r.TransferFile(file.SourcePath, file.DestPath); err != nil {
+			if err := r.doTransferFile(file.SourcePath, file.DestPath); err != nil {
 				return err
 			}
 		}
@@ -270,6 +261,40 @@ func (r *RsyncTransfer) createIncludeFile(baseDir string, files []types.FileTran
 	}
 
 	return tmpFile.Name(), nil
+}
+
+// TransferFiles transfers multiple files using rsync (public interface for backward compatibility)
+func (r *RsyncTransfer) TransferFiles(files []types.FileTransfer) error {
+	return r.doTransferFiles(files)
+}
+
+// Internal interface methods (lowercase for internalTransferer interface)
+func (r *RsyncTransfer) fileExists(path string) (bool, error) {
+	return r.FileExists(path)
+}
+
+func (r *RsyncTransfer) getFileSize(path string) (int64, error) {
+	return r.GetFileSize(path)
+}
+
+func (r *RsyncTransfer) deleteFile(path string) error {
+	return r.DeleteFile(path)
+}
+
+func (r *RsyncTransfer) listDirectoryContents(rootPath string) ([]string, error) {
+	return r.ListDirectoryContents(rootPath)
+}
+
+func (r *RsyncTransfer) mapSourcePathToLocal(sourcePath string) (string, error) {
+	return r.MapSourcePathToLocal(sourcePath)
+}
+
+func (r *RsyncTransfer) mapLocalPathToDest(localPath string) (string, error) {
+	return r.MapLocalPathToDest(localPath)
+}
+
+func (r *RsyncTransfer) close() error {
+	return r.Close()
 }
 
 // Close is a no-op for rsync (no persistent connections)
