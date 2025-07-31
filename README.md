@@ -1,8 +1,9 @@
 # SyncArr 🎬📺🔃
 
-![Docker](https://img.shields.io/badge/docker-%230db7ed.svg?style=for-the-badge&logo=docker&logoColor=white)
-![Go](https://img.shields.io/badge/go-%2300ADD8.svg?style=for-the-badge&logo=go&logoColor=white)
-![Plex](https://img.shields.io/badge/plex-%23E5A00D.svg?style=for-the-badge&logo=plex&logoColor=white)
+[![GitHub Release](https://img.shields.io/github/v/release/nullable-eth/syncarr?style=flat-square)](https://github.com/nullable-eth/syncarr/releases/latest)
+[![Docker Image](https://img.shields.io/badge/docker-ghcr.io-blue?style=flat-square&logo=docker)](https://github.com/nullable-eth/syncarr/pkgs/container/syncarr)
+[![Go Version](https://img.shields.io/github/go-mod/go-version/nullable-eth/syncarr?style=flat-square)](https://golang.org/)
+[![GitHub Actions](https://img.shields.io/github/actions/workflow/status/nullable-eth/syncarr/release.yml?branch=main&style=flat-square)](https://github.com/nullable-eth/syncarr/actions)
 
 **SyncArr** is a high-performance Go application that synchronizes labeled movies and TV shows between Plex Media Servers. It provides fast file transfers using rsync, comprehensive metadata synchronization, and intelligent content matching to keep your Plex libraries perfectly synchronized.
 
