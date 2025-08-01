@@ -22,10 +22,9 @@ var (
 func main() {
 	// Command line flags
 	var (
-		showVersion   = flag.Bool("version", false, "Show version information")
-		validateOnly  = flag.Bool("validate", false, "Validate configuration and exit")
-		oneShot       = flag.Bool("oneshot", false, "Run sync once and exit (don't run continuously)")
-		forceFullSync = flag.Bool("force-full-sync", false, "Force a complete synchronization, bypassing incremental checks")
+		showVersion  = flag.Bool("version", false, "Show version information")
+		validateOnly = flag.Bool("validate", false, "Validate configuration and exit")
+		oneShot      = flag.Bool("oneshot", false, "Run sync once and exit (don't run continuously)")
 	)
 	flag.Parse()
 
@@ -38,11 +37,6 @@ func main() {
 	cfg, err := config.LoadConfig()
 	if err != nil {
 		log.Fatalf("Failed to load configuration: %v", err)
-	}
-
-	// Override force full sync if specified via command line
-	if *forceFullSync {
-		cfg.ForceFullSync = true
 	}
 
 	// Validate configuration
@@ -65,7 +59,6 @@ func main() {
 		"source_host":      cfg.Source.Host,
 		"destination_host": cfg.Destination.Host,
 		"sync_label":       cfg.SyncLabel,
-		"force_full_sync":  cfg.ForceFullSync,
 		"dry_run":          cfg.DryRun,
 	}).Info("SyncArr starting up")
 
@@ -79,11 +72,6 @@ func main() {
 			log.WithError(err).Error("Failed to close sync orchestrator")
 		}
 	}()
-
-	// Handle force full sync
-	if err := sync.HandleForceFullSync(); err != nil {
-		log.WithError(err).Fatal("Failed to handle force full sync")
-	}
 
 	// Set up signal handling for graceful shutdown
 	sigChan := make(chan os.Signal, 1)

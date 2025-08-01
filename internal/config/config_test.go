@@ -24,7 +24,6 @@ func TestLoadConfig(t *testing.T) {
 		"DEST_ROOT_DIR":        "/test/dest",
 		"LOG_LEVEL":            "DEBUG",
 		"DRY_RUN":              "true",
-		"FORCE_FULL_SYNC":      "false",
 	}
 
 	// Set environment variables
@@ -75,10 +74,6 @@ func TestLoadConfig(t *testing.T) {
 	// Test boolean flags
 	if !cfg.DryRun {
 		t.Error("Expected DryRun to be true")
-	}
-
-	if cfg.ForceFullSync {
-		t.Error("Expected ForceFullSync to be false")
 	}
 
 	// Test log level

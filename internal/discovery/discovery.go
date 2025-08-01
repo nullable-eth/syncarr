@@ -35,7 +35,7 @@ func NewContentDiscovery(sourceClient *plex.Client, syncLabel string, logger *lo
 //  2. If any movie contains the sync tag, add it to the processing list with complete metadata
 //     If any TV show contains the sync label, list all episodes of all seasons and add them with complete metadata
 func (cd *ContentDiscovery) DiscoverSyncableContent() ([]*EnhancedMediaItem, error) {
-	cd.logger.Info("Phase 1: Starting enhanced content discovery with full metadata loading")
+	cd.logger.Debug("Phase 1: Starting enhanced content discovery with full metadata loading")
 
 	var itemsToSync []*EnhancedMediaItem
 
@@ -45,7 +45,7 @@ func (cd *ContentDiscovery) DiscoverSyncableContent() ([]*EnhancedMediaItem, err
 		return nil, fmt.Errorf("failed to get libraries: %w", err)
 	}
 
-	cd.logger.WithField("library_count", len(libraries)).Info("Retrieved libraries from source server")
+	cd.logger.WithField("library_count", len(libraries)).Debug("Retrieved libraries from source server")
 
 	for _, library := range libraries {
 		cd.logger.WithFields(map[string]interface{}{
@@ -67,7 +67,7 @@ func (cd *ContentDiscovery) DiscoverSyncableContent() ([]*EnhancedMediaItem, err
 			"library_id":    library.Key,
 			"sync_label":    cd.syncLabel,
 			"labeled_items": len(labeledItems),
-		}).Info("Retrieved items with sync label, now loading full metadata")
+		}).Debug("Retrieved items with sync label, now loading full metadata")
 
 		for i, item := range labeledItems {
 			cd.logger.WithFields(map[string]interface{}{
@@ -92,7 +92,7 @@ func (cd *ContentDiscovery) DiscoverSyncableContent() ([]*EnhancedMediaItem, err
 		}
 	}
 
-	cd.logger.WithField("total_items_to_sync", len(itemsToSync)).Info("Phase 1 & 2: Enhanced content discovery with full metadata complete")
+	cd.logger.WithField("total_items_to_sync", len(itemsToSync)).Debug("Phase 1 and 2: Enhanced content discovery with full metadata complete")
 
 	return itemsToSync, nil
 }

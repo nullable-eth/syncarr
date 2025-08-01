@@ -79,7 +79,7 @@ services:
 
 - **🏷️ Label-based Sync**: Automatically sync only media items with specific Plex labels
 - **⚡ High-Performance Transfers**: Uses rsync for fast, resumable file transfers
-- **🔄 6-Phase Sync Process**: Content discovery → File transfer → Library refresh → Content matching → Metadata sync → Cleanup
+- **🔄 7-Phase Sync Process**: Content discovery → Cleanup → File transfer → Library refresh → Content matching → Metadata sync
 - **📊 Comprehensive Metadata Sync**: Titles, summaries, ratings, genres, labels, collections, artwork, and more
 - **👁️ Watched State Sync**: Keep viewing progress synchronized between servers
 - **🔄 Incremental Updates**: Only transfer changed or new content
@@ -103,7 +103,6 @@ services:
 - **🐳 Docker Ready**: Containerized application with health checks
 - **📝 Structured Logging**: JSON logging with configurable levels (DEBUG, INFO, WARN, ERROR)
 - **🔄 Continuous & One-shot Modes**: Run continuously or execute single sync cycles
-- **🎛️ Force Full Sync**: Bypass incremental checks for complete re-synchronization
 - **📈 Performance Monitoring**: Detailed transfer statistics and timing information
 - **🔍 Content Matching**: Intelligent filename-based matching between source and destination
 
@@ -146,7 +145,6 @@ services:
 | `SYNC_INTERVAL` | Minutes between sync cycles | `60` | ❌ |
 | `LOG_LEVEL` | Logging level | `INFO` | ❌ |
 | `DRY_RUN` | Test mode without changes | `false` | ❌ |
-| `FORCE_FULL_SYNC` | Force complete sync | `false` | ❌ |
 
 ### Path Mapping
 
@@ -228,9 +226,6 @@ docker run --rm -v $(pwd)/config:/config syncarr --oneshot
 # Validate configuration
 docker run --rm -v $(pwd)/config:/config syncarr --validate
 
-# Force full synchronization (bypasses incremental checks)
-docker run --rm -v $(pwd)/config:/config syncarr --force-full-sync --oneshot
-
 # Show version information
 docker run --rm syncarr --version
 
@@ -278,14 +273,14 @@ docker-compose exec syncarr ./syncarr --validate
 ## 🏗️ Architecture
 
 <details>
-<summary><strong>📊 6-Phase Sync Process</strong></summary>
+<summary><strong>📊 7-Phase Sync Process</strong></summary>
 
 1. **🔍 Content Discovery**: Scan source Plex server for labeled media
-2. **📂 File Transfer**: Copy media files using high-performance rsync
-3. **🔄 Library Refresh**: Update destination Plex library
-4. **🎯 Content Matching**: Match source items to destination items by filename
-5. **📝 Metadata Sync**: Synchronize comprehensive metadata between matched items
-6. **🧹 Cleanup**: Remove orphaned files and update statistics
+2. **🧹 Cleanup**: Remove orphaned files from destination (frees space and ensures Plex detects removals)
+3. **📂 File Transfer**: Copy media files using high-performance transfers
+4. **🔄 Library Refresh**: Update destination Plex library
+5. **🎯 Content Matching**: Match source items to destination items by filename
+6. **📝 Metadata Sync**: Synchronize comprehensive metadata between matched items
 
 </details>
 

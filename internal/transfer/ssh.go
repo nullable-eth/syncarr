@@ -126,11 +126,39 @@ func (s *sshClient) DeleteFile(path string) error {
 func (s *sshClient) ListDirectoryContents(rootPath string) ([]string, error) {
 	// Properly escape the path for shell execution
 	escapedRootPath := strings.ReplaceAll(rootPath, "'", "'\"'\"'")
-	cmd := fmt.Sprintf("find '%s' -type f", escapedRootPath)
 
-	output, err := s.executeCommand(cmd)
+	// Try find first (preferred for recursive file listing)
+	findCmd := fmt.Sprintf("find '%s' -type f 2>/dev/null", escapedRootPath)
+
+	s.logger.WithFields(map[string]interface{}{
+		"root_path": rootPath,
+		"command":   findCmd,
+	}).Debug("Executing directory listing with find")
+
+	output, err := s.executeCommand(findCmd)
 	if err != nil {
-		return nil, err
+		s.logger.WithFields(map[string]interface{}{
+			"root_path":  rootPath,
+			"find_error": err.Error(),
+		}).Debug("Find command failed, falling back to ls")
+
+		// Fallback: try a basic directory test and simpler find
+		testCmd := fmt.Sprintf("test -d '%s' && find '%s' -type f || echo \"\"", escapedRootPath, escapedRootPath)
+
+		s.logger.WithFields(map[string]interface{}{
+			"root_path": rootPath,
+			"command":   testCmd,
+		}).Debug("Executing directory listing with simpler fallback")
+
+		output, err = s.executeCommand(testCmd)
+		if err != nil {
+			s.logger.WithFields(map[string]interface{}{
+				"root_path": rootPath,
+				"error":     err.Error(),
+			}).Warn("Directory listing failed completely, assuming empty directory")
+			// Return empty list instead of failing - cleanup can continue
+			return []string{}, nil
+		}
 	}
 
 	files := strings.Split(strings.TrimSpace(string(output)), "\n")

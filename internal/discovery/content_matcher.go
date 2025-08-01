@@ -8,7 +8,7 @@ import (
 	"github.com/nullable-eth/syncarr/internal/plex"
 )
 
-// ContentMatcher handles Phase 5: Content Matching
+// ContentMatcher handles Phase 6: Content Matching
 type ContentMatcher struct {
 	sourceClient *plex.Client
 	destClient   *plex.Client
@@ -31,9 +31,9 @@ func NewContentMatcher(sourceClient, destClient *plex.Client, log *logger.Logger
 	}
 }
 
-// MatchItemsByFilename implements Phase 5: Content Matching by filename with full metadata
+// MatchItemsByFilename implements Phase 6: Content Matching by filename with full metadata
 func (cm *ContentMatcher) MatchItemsByFilename(sourceItems []*EnhancedMediaItem) ([]ItemMatch, error) {
-	cm.logger.Info("Phase 5: Starting enhanced content matching by filename with full metadata loading")
+	cm.logger.Info("Phase 6: START - Content Matching")
 
 	// Get all items from destination server and load their full metadata
 	destLibraries, err := cm.destClient.GetLibraries()

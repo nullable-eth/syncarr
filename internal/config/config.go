@@ -22,7 +22,6 @@ type Config struct {
 	SSH               SSHConfig         `json:"ssh"`
 	Performance       PerformanceConfig `json:"performance"`
 	Transfer          TransferConfig    `json:"transfer"`
-	ForceFullSync     bool              `json:"forceFullSync"`
 	DryRun            bool              `json:"dryRun"`
 	LogLevel          string            `json:"logLevel"`
 }
@@ -91,9 +90,8 @@ func LoadConfig() (*Config, error) {
 			Port:     getEnvWithDefault("SSH_PORT", "22"),
 			KeyPath:  getEnvWithDefault("SSH_KEY_PATH", ""), // Keep for future use
 		},
-		DryRun:        parseBoolEnv("DRY_RUN", false),
-		LogLevel:      getEnvWithDefault("LOG_LEVEL", "INFO"),
-		ForceFullSync: parseBoolEnv("FORCE_FULL_SYNC", false),
+		DryRun:   parseBoolEnv("DRY_RUN", false),
+		LogLevel: getEnvWithDefault("LOG_LEVEL", "INFO"),
 	}
 
 	// Set protocol based on RequireHTTPS
