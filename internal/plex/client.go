@@ -106,10 +106,6 @@ func (c *Client) GetLibraries() ([]Library, error) {
 		return nil, fmt.Errorf("failed to parse library response: %w. Response body: %s", err, string(body))
 	}
 
-	c.logger.WithFields(map[string]interface{}{
-		"library_count": len(libraryResponse.MediaContainer.Directory),
-	}).Info("Retrieved libraries using labelarr-based client")
-
 	return libraryResponse.MediaContainer.Directory, nil
 }
 
@@ -268,6 +264,30 @@ func (c *Client) TriggerLibraryScan(libraryID string) error {
 	}
 
 	c.logger.WithField("library_id", libraryID).Debug("Triggered library scan")
+	return nil
+}
+
+// TriggerMetadataRefresh triggers a full metadata refresh for the specified library
+func (c *Client) TriggerMetadataRefresh(libraryID string) error {
+	url := c.buildURL(fmt.Sprintf("/library/sections/%s/refresh?force=1", libraryID))
+
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("X-Plex-Token", c.config.Token)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to trigger metadata refresh: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("failed to trigger metadata refresh, status code: %d", resp.StatusCode)
+	}
+
+	c.logger.WithField("library_id", libraryID).Debug("Triggered metadata refresh")
 	return nil
 }
 
@@ -736,7 +756,7 @@ func (c *Client) GetItemsWithLabelDirect(libraryID, label string) ([]interface{}
 		"library_id":     libraryID,
 		"label":          label,
 		"filtered_items": len(result.MediaContainer.Metadata),
-	}).Info("Got basic items with label filter, fetching detailed metadata")
+	}).Debug("Got basic items with label filter, fetching detailed metadata")
 
 	var items []interface{}
 	for _, rawItem := range result.MediaContainer.Metadata {
@@ -817,7 +837,7 @@ func (c *Client) GetItemsWithLabelDirect(libraryID, label string) ([]interface{}
 		"library_id":  libraryID,
 		"label":       label,
 		"total_items": len(items),
-	}).Info("Completed detailed metadata fetch for labeled items")
+	}).Debug("Completed detailed metadata fetch for labeled items")
 
 	return items, nil
 }

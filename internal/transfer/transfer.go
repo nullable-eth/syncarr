@@ -220,7 +220,7 @@ func IsRsyncAvailable(log *logger.Logger) bool {
 			continue
 		}
 
-		log.WithField("rsync_path", rsyncPath).Info("rsync found locally via LookPath")
+		log.WithField("rsync_path", rsyncPath).Debug("rsync found locally via LookPath")
 
 		// Test if rsync actually runs (quick version check)
 		if testRsyncExecution(rsyncPath, log) {
@@ -278,7 +278,7 @@ func testRsyncExecution(rsyncPath string, log *logger.Logger) bool {
 	log.WithFields(map[string]interface{}{
 		"rsync_path":    rsyncPath,
 		"rsync_version": versionText,
-	}).Info("rsync version check successful - rsync is available")
+	}).Debug("rsync version check successful - rsync is available")
 
 	return true
 }

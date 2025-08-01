@@ -15,7 +15,7 @@ import (
 	"github.com/nullable-eth/syncarr/internal/transfer"
 )
 
-// SyncOrchestrator coordinates the 6-phase synchronization process
+// SyncOrchestrator coordinates the 7-phase synchronization process
 type SyncOrchestrator struct {
 	config           *config.Config
 	logger           *logger.Logger
@@ -39,7 +39,7 @@ func NewSyncOrchestrator(cfg *config.Config, log *logger.Logger) (*SyncOrchestra
 	}
 
 	// Initialize Plex clients
-	log.Info("Creating source Plex client")
+	log.Debug("Creating source Plex client")
 	sourceClient, err := plex.NewClient(&cfg.Source, log)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create source Plex client: %w", err)
@@ -53,7 +53,7 @@ func NewSyncOrchestrator(cfg *config.Config, log *logger.Logger) (*SyncOrchestra
 	}
 	orchestrator.destClient = destClient
 
-	// Initialize content discovery (Phase 1 & 2)
+	// Initialize content discovery (Phase 1 and 2)
 	orchestrator.contentDiscovery = discovery.NewContentDiscovery(sourceClient, cfg.SyncLabel, log)
 
 	// Phase 3: Transfer Files - Use configured or auto-detect optimal transfer method
@@ -116,10 +116,10 @@ func (s *SyncOrchestrator) Close() error {
 	return nil
 }
 
-// RunSyncCycle executes the complete 6-phase synchronization workflow
+// RunSyncCycle executes the complete 7-phase synchronization workflow
 func (s *SyncOrchestrator) RunSyncCycle() error {
 	startTime := time.Now()
-	s.logger.Info("Starting 6-phase synchronization cycle")
+	s.logger.Info("Starting 7-phase synchronization cycle")
 
 	defer func() {
 		duration := time.Since(startTime)
@@ -135,22 +135,52 @@ func (s *SyncOrchestrator) RunSyncCycle() error {
 	}
 	s.logger.Info("Destination server is available, proceeding with sync")
 
-	// Phase 1 & 2: Content Discovery and Filtering with Full Metadata
-	s.logger.Info("Phase 1 & 2: Discovering and filtering syncable content with full metadata")
+	// Phase 1 and 2: Content Discovery and Filtering with Full Metadata
+	s.logger.WithField("sync_label", s.config.SyncLabel).Info("Phase 1 and 2: START - Content Discovery")
 	itemsToSync, err := s.contentDiscovery.DiscoverSyncableContent()
 	if err != nil {
 		return fmt.Errorf("content discovery failed: %w", err)
 	}
-	s.logger.WithField("item_count", len(itemsToSync)).Info("Enhanced content discovery complete")
+
+	// Count items by type for summary
+	var movieCount, showCount, episodeCount int
+	for _, item := range itemsToSync {
+		switch item.ItemType {
+		case "movie":
+			movieCount++
+		case "show":
+			showCount++
+		case "episode":
+			episodeCount++
+		}
+	}
+
+	s.logger.WithFields(map[string]interface{}{
+		"total_items": len(itemsToSync),
+		"movies":      movieCount,
+		"shows":       showCount,
+		"episodes":    episodeCount,
+		"sync_label":  s.config.SyncLabel,
+	}).Info("Phase 1 and 2: FINISH - Content Discovery")
 
 	if len(itemsToSync) == 0 {
 		s.logger.Info("No items found for synchronization")
 		return nil
 	}
 
-	// Phase 3: File Transfer (skip if SSH not configured)
+	// Phase 3: Cleanup - Remove files on destination that aren't in current sync list (before transfer to free space and ensure Plex detects removals)
 	if s.fileTransfer != nil {
-		s.logger.Info("Phase 3: Transferring files")
+		s.logger.Info("Phase 3: START - Orphaned File Cleanup")
+		if err := s.cleanupOrphanedFiles(itemsToSync); err != nil {
+			s.logger.WithError(err).Warn("Failed to cleanup orphaned files, continuing")
+		} else {
+			s.logger.Info("Phase 3: FINISH - Orphaned File Cleanup")
+		}
+	}
+
+	// Phase 4: File Transfer (skip if SSH not configured)
+	if s.fileTransfer != nil {
+		s.logger.Info("Phase 4: START - File Transfer")
 
 		// Clear the synced files map for this cycle
 		s.syncedFiles = make(map[string]bool)
@@ -188,29 +218,21 @@ func (s *SyncOrchestrator) RunSyncCycle() error {
 			"transferred":  transferredCount,
 			"errors":       errorCount,
 			"success_rate": fmt.Sprintf("%.1f%%", float64(transferredCount)/float64(totalItems)*100),
-		}).Debug("File transfer phase complete")
+		}).Info("Phase 4: FINISH - File Transfer")
 
-		// Phase 3.5: Cleanup - Remove files on destination that aren't in current sync list
-		s.logger.Info("Phase 3.5: Cleaning up orphaned files on destination")
-		if err := s.cleanupOrphanedFiles(); err != nil {
-			s.logger.WithError(err).Warn("Failed to cleanup orphaned files, continuing")
-		} else {
-			s.logger.Info("Cleanup phase complete")
-		}
-
-		// Phase 4: Library Refresh and Monitoring (only needed after file transfer)
-		s.logger.Info("Phase 4: Refreshing destination libraries")
+		// Phase 5: Library Refresh and Monitoring (only needed after file transfer)
+		s.logger.Info("Phase 5: START - Library Refresh")
 		if err := s.libraryManager.TriggerRefreshAndWait(); err != nil {
 			return fmt.Errorf("library refresh failed: %w", err)
 		}
-		s.logger.Info("Library refresh complete")
+		s.logger.Info("Phase 5: FINISH - Library Refresh")
 	} else {
-		s.logger.Info("Phase 3: Skipping file transfer (SSH not configured)")
-		s.logger.Info("Phase 4: Skipping library refresh (no files transferred)")
+		s.logger.Info("Phase 4: SKIP - File Transfer (SSH not configured)")
+		s.logger.Info("Phase 5: SKIP - Library Refresh (no files transferred)")
 	}
 
-	// Phase 5: Content Matching
-	s.logger.Info("Phase 5: Matching items by filename")
+	// Phase 6: Content Matching
+	s.logger.Info("Phase 6: START - Content Matching")
 	matches, err := s.contentMatcher.MatchItemsByFilename(itemsToSync)
 	if err != nil {
 		return fmt.Errorf("content matching failed: %w", err)
@@ -219,12 +241,12 @@ func (s *SyncOrchestrator) RunSyncCycle() error {
 		"source_items": len(itemsToSync),
 		"matches":      len(matches),
 		"success_rate": fmt.Sprintf("%.1f%%", float64(len(matches))/float64(len(itemsToSync))*100),
-	}).Info("Content matching complete")
+	}).Info("Phase 6: FINISH - Content Matching")
 
-	// Phase 6: Metadata Synchronization
-	s.logger.Info("Phase 6: Synchronizing metadata")
+	// Phase 7: Metadata Synchronization
+	s.logger.Info("Phase 7: START - Metadata Synchronization")
 	if len(matches) == 0 {
-		s.logger.Info("No matches found, skipping metadata synchronization")
+		s.logger.Info("Phase 7: SKIP - Metadata Synchronization (no matches found)")
 	} else {
 		success, errors, skipped := s.syncAllMetadata(matches)
 		s.logger.WithFields(map[string]interface{}{
@@ -232,7 +254,7 @@ func (s *SyncOrchestrator) RunSyncCycle() error {
 			"success": success,
 			"errors":  errors,
 			"skipped": skipped,
-		}).Info("Metadata synchronization complete")
+		}).Info("Phase 7: FINISH - Metadata Synchronization")
 	}
 
 	s.logger.Info("🎉 Sync cycle completed successfully!")
@@ -391,14 +413,56 @@ func (s *SyncOrchestrator) extractEpisodeFilePaths(episode plex.Episode) []strin
 	return paths
 }
 
+// extractEnhancedItemFilePaths extracts file paths from an enhanced media item
+func (s *SyncOrchestrator) extractEnhancedItemFilePaths(enhancedItem *discovery.EnhancedMediaItem) []string {
+	var filePaths []string
+
+	switch v := enhancedItem.Item.(type) {
+	case plex.Movie:
+		filePaths = s.extractMovieFilePaths(v)
+	case plex.TVShow:
+		// For TV shows, get all episodes and their file paths
+		episodes, err := s.sourceClient.GetAllTVShowEpisodes(v.RatingKey.String())
+		if err != nil {
+			s.logger.WithError(err).WithField("show", v.Title).Debug("Failed to get episodes for TV show during cleanup")
+			return []string{}
+		}
+		for _, episode := range episodes {
+			episodePaths := s.extractEpisodeFilePaths(episode)
+			filePaths = append(filePaths, episodePaths...)
+		}
+	case plex.Episode:
+		filePaths = s.extractEpisodeFilePaths(v)
+	default:
+		s.logger.WithField("item_type", fmt.Sprintf("%T", enhancedItem.Item)).Debug("Unknown enhanced item type for cleanup")
+	}
+
+	return filePaths
+}
+
 // cleanupOrphanedFiles removes files on the destination that aren't in the current sync list
-func (s *SyncOrchestrator) cleanupOrphanedFiles() error {
+func (s *SyncOrchestrator) cleanupOrphanedFiles(itemsToSync []*discovery.EnhancedMediaItem) error {
 	if s.config.DestRootDir == "" {
 		s.logger.Debug("No destination root directory configured, skipping cleanup")
 		return nil
 	}
 
 	s.logger.WithField("dest_root", s.config.DestRootDir).Info("Scanning destination directory for orphaned files")
+
+	// Build expected files map from current sync items
+	expectedFiles := make(map[string]bool)
+	for _, enhancedItem := range itemsToSync {
+		filePaths := s.extractEnhancedItemFilePaths(enhancedItem)
+		for _, filePath := range filePaths {
+			// Map to destination path
+			destPath, err := s.config.MapLocalPathToDest(filePath)
+			if err != nil {
+				s.logger.WithError(err).WithField("source_path", filePath).Debug("Failed to map source path to destination, skipping")
+				continue
+			}
+			expectedFiles[destPath] = true
+		}
+	}
 
 	// Get list of all files in destination directory
 	destFiles, err := s.fileTransfer.ListDirectoryContents(s.config.DestRootDir)
@@ -408,8 +472,8 @@ func (s *SyncOrchestrator) cleanupOrphanedFiles() error {
 
 	orphanedCount := 0
 	for _, destFile := range destFiles {
-		// Check if this file is in our current sync list
-		if !s.syncedFiles[destFile] {
+		// Check if this file is in our current expected files list
+		if !expectedFiles[destFile] {
 			s.logger.WithField("orphaned_file", destFile).Debug("Removing orphaned file from destination")
 
 			if err := s.fileTransfer.DeleteFile(destFile); err != nil {
@@ -421,7 +485,7 @@ func (s *SyncOrchestrator) cleanupOrphanedFiles() error {
 	}
 
 	s.logger.WithFields(map[string]interface{}{
-		"synced_files":   len(s.syncedFiles),
+		"expected_files": len(expectedFiles),
 		"dest_files":     len(destFiles),
 		"orphaned_files": orphanedCount,
 	}).Debug("Cleanup phase statistics")
@@ -803,20 +867,6 @@ func (s *SyncOrchestrator) RunContinuous() error {
 			s.logger.WithError(err).Error("Sync cycle failed")
 		}
 	}
-
-	return nil
-}
-
-// HandleForceFullSync clears all sync state and forces a complete re-sync
-func (s *SyncOrchestrator) HandleForceFullSync() error {
-	if !s.config.ForceFullSync {
-		return nil
-	}
-
-	s.logger.Info("Force full sync enabled - will perform complete synchronization")
-
-	// TODO: Clear sync state from database/storage when state management is implemented
-	s.logger.Info("Sync state cleared for force full sync")
 
 	return nil
 }

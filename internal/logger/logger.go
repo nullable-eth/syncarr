@@ -1,6 +1,7 @@
 package logger
 
 import (
+	"math"
 	"os"
 	"time"
 
@@ -65,33 +66,52 @@ func (l *Logger) LogItemSkipped(item types.SyncableItem, reason string) {
 
 // LogTransferStarted logs when a file transfer begins
 func (l *Logger) LogTransferStarted(sourcePath, destPath string, sizeBytes int64) {
+	sizeMB := math.Round(float64(sizeBytes)/(1024*1024)*10) / 10 // Convert bytes to MB, 1 decimal
 	l.WithFields(logrus.Fields{
 		"event":       "transfer_started",
 		"source_path": sourcePath,
 		"dest_path":   destPath,
-		"size_bytes":  sizeBytes,
+		"size_mb":     sizeMB,
 	}).Info("File transfer started")
 }
 
 // LogTransferCompleted logs when a file transfer completes
 func (l *Logger) LogTransferCompleted(sourcePath, destPath string, sizeBytes int64, duration time.Duration) {
-	l.WithFields(logrus.Fields{
+	sizeMB := float64(sizeBytes) / (1024 * 1024)                   // Convert bytes to MB
+	durationSeconds := duration.Seconds()                          // Duration in seconds
+	transferRateMBps := math.Round(sizeMB/durationSeconds*10) / 10 // MB/s rounded to 1 decimal
+
+	// Use seconds for short transfers, minutes for long ones
+	var durationField interface{}
+	var durationKey string
+	if durationSeconds < 120 { // Less than 2 minutes, show in seconds
+		durationField = math.Round(durationSeconds*10) / 10 // 1 decimal place
+		durationKey = "duration_sec"
+	} else { // 2+ minutes, show in minutes
+		durationField = math.Round(durationSeconds/60*10) / 10 // 1 decimal place
+		durationKey = "duration_min"
+	}
+
+	fields := logrus.Fields{
 		"event":       "transfer_completed",
 		"source_path": sourcePath,
 		"dest_path":   destPath,
-		"size_bytes":  sizeBytes,
-		"duration_ms": duration.Milliseconds(),
-		"rate_mbps":   float64(sizeBytes*8) / float64(duration.Seconds()) / 1000000, // Mbps
-	}).Info("File transfer completed")
+		"size_mb":     math.Round(sizeMB*10) / 10, // MB rounded to 1 decimal
+		"rate_mbps":   transferRateMBps,           // MB/s rounded to 1 decimal
+	}
+	fields[durationKey] = durationField
+
+	l.WithFields(fields).Info("File transfer completed")
 }
 
 // LogTransferSkipped logs when a file transfer is skipped (file already exists)
 func (l *Logger) LogTransferSkipped(sourcePath, destPath string, sizeBytes int64, reason string) {
+	sizeMB := math.Round(float64(sizeBytes)/(1024*1024)*10) / 10 // Convert bytes to MB, 1 decimal
 	l.WithFields(logrus.Fields{
 		"event":       "transfer_skipped",
 		"source_path": sourcePath,
 		"dest_path":   destPath,
-		"size_bytes":  sizeBytes,
+		"size_mb":     sizeMB,
 		"reason":      reason,
 	}).Debug("File transfer skipped")
 }
@@ -135,13 +155,6 @@ func (l *Logger) LogSyncComplete(stats types.SyncStats) {
 		"watched_states_synced": stats.WatchedStatesSynced,
 		"duration_ms":           stats.Duration.Milliseconds(),
 	}).Info("Sync cycle completed")
-}
-
-// LogForceFullSync logs when force full sync is enabled
-func (l *Logger) LogForceFullSync() {
-	l.WithFields(logrus.Fields{
-		"event": "force_full_sync",
-	}).Info("Force full sync enabled - clearing all sync state")
 }
 
 // LogStateCleared logs when sync state is cleared

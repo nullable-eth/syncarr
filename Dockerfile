@@ -3,12 +3,32 @@ FROM golang:1.24-alpine AS builder
 
 WORKDIR /app
 
+# Install git for version detection
+RUN apk add --no-cache git
+
 # Copy source code (includes go.mod)
 COPY . .
 RUN go mod download
 
-# Build the application
-RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o syncarr ./cmd/syncarr
+# Build arguments for version information (can be provided by CI/CD)
+ARG VERSION
+ARG COMMIT
+ARG BUILD_DATE
+
+# Auto-detect version information if not provided via build args
+RUN if [ -z "$VERSION" ]; then \
+     VERSION=$(git describe --tags --always --dirty 2>/dev/null || echo "dev-local"); \
+     fi && \
+     if [ -z "$COMMIT" ]; then \
+     COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo "local"); \
+     fi && \
+     if [ -z "$BUILD_DATE" ]; then \
+     BUILD_DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ"); \
+     fi && \
+     echo "Building with VERSION=$VERSION, COMMIT=$COMMIT, BUILD_DATE=$BUILD_DATE" && \
+     CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo \
+     -ldflags "-X main.version=$VERSION -X main.commit=$COMMIT -X main.date=$BUILD_DATE" \
+     -o syncarr ./cmd/syncarr
 
 # Runtime stage
 FROM alpine:latest

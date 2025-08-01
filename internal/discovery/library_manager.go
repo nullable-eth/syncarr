@@ -8,7 +8,7 @@ import (
 	"github.com/nullable-eth/syncarr/internal/plex"
 )
 
-// LibraryManager handles Phase 4: Library refresh and monitoring
+// LibraryManager handles Phase 5: Library refresh and monitoring
 type LibraryManager struct {
 	destClient *plex.Client
 	logger     *logger.Logger
@@ -24,7 +24,7 @@ func NewLibraryManager(destClient *plex.Client, log *logger.Logger) *LibraryMana
 
 // TriggerRefreshAndWait triggers library scans and waits for completion
 func (lm *LibraryManager) TriggerRefreshAndWait() error {
-	lm.logger.Info("Phase 4: Triggering library refresh on destination server")
+	lm.logger.Info("Phase 5: START - Library Refresh")
 
 	// First, wait for any existing scans to complete before starting new ones
 	lm.logger.Debug("Checking for existing library scans before starting new ones")
@@ -81,7 +81,51 @@ func (lm *LibraryManager) TriggerRefreshAndWait() error {
 	}
 
 	// Monitor scan completion for successfully triggered scans
-	return lm.waitForAllScansComplete(successfulScans)
+	if err := lm.waitForAllScansComplete(successfulScans); err != nil {
+		return fmt.Errorf("library scan failed: %w", err)
+	}
+
+	lm.logger.Info("Library scans completed, now triggering metadata refresh for all libraries")
+
+	// Trigger metadata refresh for all libraries to populate initial metadata
+	var successfulMetadataRefresh []plex.Library
+	var failedMetadataRefresh []string
+
+	for _, library := range libraries {
+		lm.logger.WithFields(map[string]interface{}{
+			"library_id":   library.Key,
+			"library_name": library.Title,
+		}).Debug("Triggering metadata refresh")
+
+		if err := lm.destClient.TriggerMetadataRefresh(library.Key); err != nil {
+			lm.logger.WithError(err).WithFields(map[string]interface{}{
+				"library_id":   library.Key,
+				"library_name": library.Title,
+			}).Error("Failed to trigger metadata refresh")
+			failedMetadataRefresh = append(failedMetadataRefresh, fmt.Sprintf("%s (%s)", library.Title, library.Key))
+		} else {
+			successfulMetadataRefresh = append(successfulMetadataRefresh, library)
+			lm.logger.WithFields(map[string]interface{}{
+				"library_id":   library.Key,
+				"library_name": library.Title,
+			}).Debug("Successfully triggered metadata refresh")
+		}
+	}
+
+	// Log metadata refresh trigger results
+	if len(failedMetadataRefresh) > 0 {
+		lm.logger.WithField("failed_libraries", failedMetadataRefresh).Warn("Some metadata refreshes failed to trigger")
+	}
+
+	// If no metadata refreshes were successfully triggered, don't wait
+	if len(successfulMetadataRefresh) == 0 {
+		return fmt.Errorf("failed to trigger any metadata refreshes")
+	}
+
+	lm.logger.WithField("library_count", len(successfulMetadataRefresh)).Info("Waiting for metadata refresh to complete")
+
+	// Monitor metadata refresh completion
+	return lm.waitForAllMetadataRefreshComplete(successfulMetadataRefresh)
 }
 
 // waitForExistingScansComplete waits for any existing library scans to complete
@@ -209,5 +253,50 @@ func (lm *LibraryManager) logScanProgress(activities []plex.Activity) {
 		}
 
 		lm.logger.WithFields(fields).Debug("Scan progress")
+	}
+}
+
+// waitForAllMetadataRefreshComplete waits for all metadata refreshes to complete
+func (lm *LibraryManager) waitForAllMetadataRefreshComplete(libraries []plex.Library) error {
+	lm.logger.WithField("library_count", len(libraries)).Info("Monitoring metadata refresh completion")
+
+	const maxWaitTime = 30 * time.Minute // Metadata refresh can take longer than scans
+	const checkInterval = 15 * time.Second
+	startTime := time.Now()
+
+	for {
+		if time.Since(startTime) > maxWaitTime {
+			lm.logger.Warn("Metadata refresh wait timeout reached, proceeding anyway")
+			return nil
+		}
+
+		// Check if any metadata refresh activities are still running
+		metadataInProgress, activities, err := lm.destClient.IsLibraryScanInProgress()
+		if err != nil {
+			lm.logger.WithError(err).Warn("Error checking metadata refresh status")
+			return nil
+		}
+
+		if !metadataInProgress {
+			lm.logger.Info("All metadata refreshes completed successfully")
+			return nil
+		}
+
+		// Log progress for metadata refresh activities
+		var refreshActivities []string
+		for _, activity := range activities {
+			if activity.Type == "library.refresh" {
+				refreshActivities = append(refreshActivities, activity.Title)
+			}
+		}
+
+		if len(refreshActivities) > 0 {
+			lm.logger.WithFields(map[string]interface{}{
+				"active_refreshes": refreshActivities,
+				"elapsed_time":     time.Since(startTime).Round(time.Second),
+			}).Debug("Metadata refresh still in progress")
+		}
+
+		time.Sleep(checkInterval)
 	}
 }
