@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -13,9 +14,10 @@ type Config struct {
 	Source            PlexServerConfig  `json:"source"`
 	Destination       PlexServerConfig  `json:"destination"`
 	SyncLabel         string            `json:"syncLabel"`
-	SourceReplaceFrom string            `json:"sourceReplaceFrom"` // Optional: Source path pattern to replace (e.g., "/data/Movies")
-	SourceReplaceTo   string            `json:"sourceReplaceTo"`   // Optional: Local path replacement (e.g., "M:\\Movies")
+	SourceReplaceFrom string            `json:"sourceReplaceFrom"` // Optional: Source path prefix to strip (e.g., "/data/Movies")
+	SourceReplaceTo   string            `json:"sourceReplaceTo"`   // Optional: Local path replacement (e.g., "/media/source"). Leave empty for same-volume mounting
 	DestRootDir       string            `json:"destRootDir"`       // Required: Destination root path (e.g., "/mnt/data/Movies")
+	TransferMethod    string            `json:"transferMethod"`    // Optional: Force transfer method ("rsync" or "scp"), auto-detected if empty
 	Interval          time.Duration     `json:"interval"`
 	SSH               SSHConfig         `json:"ssh"`
 	Performance       PerformanceConfig `json:"performance"`
@@ -82,11 +84,12 @@ func LoadConfig() (*Config, error) {
 		SourceReplaceFrom: getEnvWithDefault("SOURCE_REPLACE_FROM", ""),
 		SourceReplaceTo:   getEnvWithDefault("SOURCE_REPLACE_TO", ""),
 		DestRootDir:       getEnvWithDefault("DEST_ROOT_DIR", ""),
+		TransferMethod:    strings.ToLower(getEnvWithDefault("TRANSFER_METHOD", "")), // rsync, scp, or empty for auto-detection
 		SSH: SSHConfig{
-			User:     getEnvWithDefault("OPT_SSH_USER", ""),
-			Password: getEnvWithDefault("OPT_SSH_PASSWORD", ""),
-			Port:     getEnvWithDefault("OPT_SSH_PORT", "22"),
-			KeyPath:  getEnvWithDefault("OPT_SSH_KEY_PATH", ""), // Keep for future use
+			User:     getEnvWithDefault("SSH_USER", ""),
+			Password: getEnvWithDefault("SSH_PASSWORD", ""),
+			Port:     getEnvWithDefault("SSH_PORT", "22"),
+			KeyPath:  getEnvWithDefault("SSH_KEY_PATH", ""), // Keep for future use
 		},
 		DryRun:        parseBoolEnv("DRY_RUN", false),
 		LogLevel:      getEnvWithDefault("LOG_LEVEL", "INFO"),
@@ -241,4 +244,79 @@ func parseFloatEnv(key string, defaultValue float64) float64 {
 		}
 	}
 	return defaultValue
+}
+
+// MapSourcePathToLocal converts a source Plex server path to a local filesystem path
+func (c *Config) MapSourcePathToLocal(sourcePath string) (string, error) {
+	if sourcePath == "" {
+		return "", fmt.Errorf("source path is empty")
+	}
+
+	// If no source replacement configured, use the Plex path as-is
+	if c.SourceReplaceFrom == "" {
+		return filepath.FromSlash(sourcePath), nil
+	}
+
+	// If SourceReplaceFrom is set but SourceReplaceTo is empty,
+	// use source path as-is (same volume mounting scenario)
+	if c.SourceReplaceTo == "" {
+		return filepath.FromSlash(sourcePath), nil
+	}
+
+	// Apply source replacement pattern
+	sourcePathNorm := filepath.ToSlash(sourcePath)
+	sourceReplaceFromNorm := filepath.ToSlash(c.SourceReplaceFrom)
+
+	if !strings.HasPrefix(sourcePathNorm, sourceReplaceFromNorm) {
+		return "", fmt.Errorf("source path %s does not start with replacement pattern %s", sourcePath, c.SourceReplaceFrom)
+	}
+
+	relativePath := strings.TrimPrefix(sourcePathNorm, sourceReplaceFromNorm)
+	relativePath = strings.TrimPrefix(relativePath, "/")
+
+	localPath := filepath.Join(c.SourceReplaceTo, relativePath)
+	return localPath, nil
+}
+
+// MapLocalPathToDest converts a local filesystem path to a destination server path
+func (c *Config) MapLocalPathToDest(localPath string) (string, error) {
+	if localPath == "" {
+		return "", fmt.Errorf("local path is empty")
+	}
+
+	if c.DestRootDir == "" {
+		return "", fmt.Errorf("destination root directory not configured")
+	}
+
+	var relativePath string
+
+	if c.SourceReplaceTo != "" {
+		// Standard case: strip SourceReplaceTo prefix from local path
+		localPathNorm := filepath.ToSlash(localPath)
+		sourceReplaceToNorm := filepath.ToSlash(c.SourceReplaceTo)
+
+		if !strings.HasPrefix(localPathNorm, sourceReplaceToNorm) {
+			return "", fmt.Errorf("local path %s does not start with source replacement root %s", localPath, c.SourceReplaceTo)
+		}
+
+		relativePath = strings.TrimPrefix(localPathNorm, sourceReplaceToNorm)
+		relativePath = strings.TrimPrefix(relativePath, "/")
+	} else if c.SourceReplaceFrom != "" {
+		// Same volume mounting: strip SourceReplaceFrom prefix to get relative path
+		localPathNorm := filepath.ToSlash(localPath)
+		sourceReplaceFromNorm := filepath.ToSlash(c.SourceReplaceFrom)
+
+		if !strings.HasPrefix(localPathNorm, sourceReplaceFromNorm) {
+			return "", fmt.Errorf("local path %s does not start with source replacement pattern %s", localPath, c.SourceReplaceFrom)
+		}
+
+		relativePath = strings.TrimPrefix(localPathNorm, sourceReplaceFromNorm)
+		relativePath = strings.TrimPrefix(relativePath, "/")
+	} else {
+		// Fallback: use just the filename (preserves original behavior)
+		relativePath = filepath.Base(localPath)
+	}
+
+	destPath := strings.TrimSuffix(c.DestRootDir, "/") + "/" + relativePath
+	return destPath, nil
 }

@@ -56,16 +56,33 @@ func NewSyncOrchestrator(cfg *config.Config, log *logger.Logger) (*SyncOrchestra
 	// Initialize content discovery (Phase 1 & 2)
 	orchestrator.contentDiscovery = discovery.NewContentDiscovery(sourceClient, cfg.SyncLabel, log)
 
-	// Phase 3: Transfer Files - Auto-detect optimal transfer method
+	// Phase 3: Transfer Files - Use configured or auto-detect optimal transfer method
 	if isSSHConfigured(cfg.SSH, log) {
-		// Auto-detect optimal transfer method (rsync preferred for performance)
-		transferMethod := transfer.GetOptimalTransferMethod(log)
+		var transferMethod transfer.TransferMethod
+
+		// Check if user specified a transfer method via environment variable
+		if cfg.TransferMethod != "" {
+			switch cfg.TransferMethod {
+			case "rsync":
+				transferMethod = transfer.TransferMethodRsync
+				log.WithField("method", "rsync").Info("Using user-configured transfer method")
+			case "scp":
+				transferMethod = transfer.TransferMethodSCP
+				log.WithField("method", "scp").Info("Using user-configured transfer method")
+			default:
+				log.WithField("invalid_method", cfg.TransferMethod).Warn("Invalid TRANSFER_METHOD specified, falling back to auto-detection")
+				transferMethod = transfer.GetOptimalTransferMethod(log)
+			}
+		} else {
+			// Auto-detect optimal method (rsync preferred for performance)
+			transferMethod = transfer.GetOptimalTransferMethod(log)
+		}
+
 		fileTransfer, err := transfer.NewTransferrer(transferMethod, cfg, log)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create file transferrer: %w", err)
 		}
 		orchestrator.fileTransfer = fileTransfer
-		log.WithField("transfer_method", string(transferMethod)).Info("High-performance file transfer enabled")
 	} else {
 		log.Info("SSH not configured - running in metadata-only sync mode")
 	}
@@ -254,7 +271,7 @@ func (s *SyncOrchestrator) transferEnhancedItemFiles(enhancedItem *discovery.Enh
 		}
 
 		// Map source Plex path to local path
-		localPath, err := s.fileTransfer.MapSourcePathToLocal(sourcePath)
+		localPath, err := s.config.MapSourcePathToLocal(sourcePath)
 		if err != nil {
 			s.logger.WithError(err).WithField("source_path", sourcePath).Error("Failed to map source path to local path")
 			continue
@@ -267,7 +284,7 @@ func (s *SyncOrchestrator) transferEnhancedItemFiles(enhancedItem *discovery.Enh
 		}
 
 		// Map local path to destination path
-		destPath, err := s.fileTransfer.MapLocalPathToDest(localPath)
+		destPath, err := s.config.MapLocalPathToDest(localPath)
 		if err != nil {
 			s.logger.WithError(err).WithField("local_path", localPath).Error("Failed to map local path to destination path")
 			continue
@@ -312,7 +329,7 @@ func (s *SyncOrchestrator) findRelatedFiles(mainFilePath string) []string {
 	prefix := filename[:dotIndex]
 
 	// Map source path to local path for directory listing
-	localDir, err := s.fileTransfer.MapSourcePathToLocal(dir)
+	localDir, err := s.config.MapSourcePathToLocal(dir)
 	if err != nil {
 		s.logger.WithError(err).WithField("source_dir", dir).Debug("Failed to map source directory to local path")
 		return allPaths
