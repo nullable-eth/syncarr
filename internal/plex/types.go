@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"encoding/xml"
 	"fmt"
+	"strconv"
 )
 
 // Library represents a Plex library
@@ -120,7 +121,7 @@ type TVShow struct {
 	UseOriginalTitle                       int               `json:"useOriginalTitle,omitempty"`
 	AudioLanguage                          string            `json:"audioLanguage,omitempty"`
 	SubtitleLanguage                       string            `json:"subtitleLanguage,omitempty"`
-	SubtitleMode                           int               `json:"subtitleMode,omitempty"`
+	SubtitleMode                           FlexibleInt       `json:"subtitleMode,omitempty"`
 	AutoDeletionItemPolicyUnwatchedLibrary int               `json:"autoDeletionItemPolicyUnwatchedLibrary,omitempty"`
 	AutoDeletionItemPolicyWatchedLibrary   int               `json:"autoDeletionItemPolicyWatchedLibrary,omitempty"`
 	Slug                                   string            `json:"slug,omitempty"`
@@ -267,6 +268,39 @@ func (fr *FlexibleRating) UnmarshalJSON(data []byte) error {
 // MarshalJSON implements custom JSON marshaling for FlexibleRating
 func (fr FlexibleRating) MarshalJSON() ([]byte, error) {
 	return json.Marshal(fr.Value)
+}
+
+// FlexibleInt can handle both string and integer values
+type FlexibleInt struct {
+	Value int
+}
+
+// UnmarshalJSON implements custom JSON unmarshaling for FlexibleInt
+func (fi *FlexibleInt) UnmarshalJSON(data []byte) error {
+	// Try to unmarshal as an integer first
+	var intValue int
+	if err := json.Unmarshal(data, &intValue); err == nil {
+		fi.Value = intValue
+		return nil
+	}
+
+	// Try to unmarshal as a string and parse it as an integer
+	var stringValue string
+	if err := json.Unmarshal(data, &stringValue); err == nil {
+		if parsedInt, parseErr := strconv.Atoi(stringValue); parseErr == nil {
+			fi.Value = parsedInt
+			return nil
+		}
+	}
+
+	// If both fail, set to 0
+	fi.Value = 0
+	return nil
+}
+
+// MarshalJSON implements custom JSON marshaling for FlexibleInt
+func (fi FlexibleInt) MarshalJSON() ([]byte, error) {
+	return json.Marshal(fi.Value)
 }
 
 // MediaContainer holds metadata for movies or TV shows

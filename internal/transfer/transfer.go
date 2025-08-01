@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -16,7 +17,7 @@ import (
 type TransferMethod string
 
 const (
-	TransferMethodSFTP  TransferMethod = "sftp"
+	TransferMethodSCP   TransferMethod = "scp"
 	TransferMethodRsync TransferMethod = "rsync"
 )
 
@@ -25,94 +26,106 @@ type FileTransferrer interface {
 	TransferFile(sourcePath, destPath string) error
 	TransferFiles(files []types.FileTransfer) error
 	Close() error
-	FileExists(path string) (bool, error)
 	GetFileSize(path string) (int64, error)
 	DeleteFile(path string) error
 	ListDirectoryContents(rootPath string) ([]string, error)
-	MapSourcePathToLocal(sourcePath string) (string, error)
-	MapLocalPathToDest(localPath string) (string, error)
 }
 
-// internalTransferer defines the interface for internal transfer implementations (rsync/scp)
-// These only handle the actual transfer without common logic like file checks and logging
-type internalTransferer interface {
+// transferImplementation defines the interface for actual transfer implementations (rsync/scp only)
+type transferImplementation interface {
 	doTransferFile(sourcePath, destPath string) error
 	doTransferFiles(files []types.FileTransfer) error
-	close() error
-	fileExists(path string) (bool, error)
-	getFileSize(path string) (int64, error)
-	deleteFile(path string) error
-	listDirectoryContents(rootPath string) ([]string, error)
-	mapSourcePathToLocal(sourcePath string) (string, error)
-	mapLocalPathToDest(localPath string) (string, error)
 }
 
-// TransferClient is the unified client that handles common logic and delegates to internal implementations
-type TransferClient struct {
-	method       TransferMethod
-	internal     internalTransferer
-	logger       *logger.Logger
-	sshConfig    *config.SSHConfig
-	serverConfig *config.PlexServerConfig
+// transferClient is the unified client that handles common logic and delegates to internal implementations
+type transferClient struct {
+	method   TransferMethod
+	fileOps  fileOperations
+	transfer transferImplementation
+	logger   *logger.Logger
+}
+
+// newSSHClient creates a new SSH client for file operations
+func newSSHClient(cfg *config.Config, log *logger.Logger) (fileOperations, error) {
+	return &sshClient{
+		sshConfig:    &cfg.SSH,
+		serverConfig: &cfg.Destination,
+		logger:       log,
+	}, nil
 }
 
 // NewTransferrer creates a new unified file transferrer that automatically chooses the best method
 func NewTransferrer(method TransferMethod, cfg *config.Config, log *logger.Logger) (FileTransferrer, error) {
-	var internal internalTransferer
-	var err error
+	// Create shared SSH client for all file operations
+	sshFileOps, err := newSSHClient(cfg, log)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create SSH client: %w", err)
+	}
+
+	// Create transfer implementation
+	var transferImpl transferImplementation
 
 	switch method {
-	case TransferMethodSFTP:
-		internal, err = newSCPTransfer(cfg, log)
+	case TransferMethodSCP:
+		transferImpl, err = newSCPTransfer(cfg, log)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create SCP transferrer: %w", err)
+		}
 	case TransferMethodRsync:
-		internal, err = newRsyncTransfer(cfg, log)
+		transferImpl, err = newRsyncTransfer(cfg, log)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create rsync transferrer: %w", err)
+		}
 	default:
 		return nil, fmt.Errorf("unsupported transfer method: %s", method)
 	}
 
-	if err != nil {
-		return nil, fmt.Errorf("failed to create %s transferrer: %w", method, err)
-	}
+	log.WithField("transfer_method", string(method)).Info("High-performance file transfer enabled")
 
-	return &TransferClient{
-		method:       method,
-		internal:     internal,
-		logger:       log,
-		sshConfig:    &cfg.SSH,
-		serverConfig: &cfg.Destination,
+	return &transferClient{
+		method:   method,
+		fileOps:  sshFileOps,
+		transfer: transferImpl,
+		logger:   log,
 	}, nil
 }
 
 // TransferFile handles file transfer with unified logic - checks file existence, size, and delegates to internal implementation
-func (t *TransferClient) TransferFile(sourcePath, destPath string) error {
+func (t *transferClient) TransferFile(sourcePath, destPath string) error {
 	// Get source file info
 	fileInfo, err := os.Stat(sourcePath)
 	if err != nil {
 		return fmt.Errorf("failed to stat source file: %w", err)
 	}
 
-	// Check if destination file already exists with same size (unified logic)
-	destExists, err := t.internal.fileExists(destPath)
+	// Check if destination file exists and get its size in one optimized call
+	destSize, err := t.fileOps.GetFileSize(destPath)
 	if err != nil {
-		t.logger.WithError(err).WithField("dest_path", destPath).Debug("Failed to check if destination file exists, proceeding with transfer")
-	} else if destExists {
-		// Check if sizes match - if so, skip transfer entirely
-		destSize, err := t.internal.getFileSize(destPath)
-		if err != nil {
-			t.logger.WithError(err).WithField("dest_path", destPath).Debug("Failed to get destination file size, proceeding with transfer")
-		} else if destSize == fileInfo.Size() {
-			// Files are the same size, log skip and return early
-			t.logger.LogTransferSkipped(sourcePath, destPath, fileInfo.Size(), "identical_size")
-			return nil
-		}
+		// File doesn't exist or can't be accessed, proceed with transfer
+		t.logger.WithError(err).WithField("dest_path", destPath).Debug("Destination file doesn't exist or can't be accessed, proceeding with transfer")
+	} else if destSize == fileInfo.Size() {
+		// Files are the same size, log skip and return early
+		t.logger.LogTransferSkipped(sourcePath, destPath, fileInfo.Size(), "identical_size")
+		return nil
+	}
+
+	// Ensure destination directory exists before transfer
+	if err := t.ensureDestinationDir(destPath); err != nil {
+		return fmt.Errorf("failed to create destination directory: %w", err)
 	}
 
 	// If we get here, we're actually going to transfer the file
 	startTime := time.Now()
 	t.logger.LogTransferStarted(sourcePath, destPath, fileInfo.Size())
 
-	// Delegate to internal implementation for actual transfer
-	if err := t.internal.doTransferFile(sourcePath, destPath); err != nil {
+	// Delegate to transfer implementation for actual transfer (directory already created)
+	if err := t.transfer.doTransferFile(sourcePath, destPath); err != nil {
+		// Check if this is a special "file was skipped" error
+		if strings.Contains(err.Error(), "file_skipped") {
+			// File was skipped by rsync (already up-to-date), log as skipped
+			t.logger.LogTransferSkipped(sourcePath, destPath, fileInfo.Size(), "rsync_skipped")
+			return nil
+		}
 		return fmt.Errorf("transfer failed using %s: %w", t.method, err)
 	}
 
@@ -123,44 +136,37 @@ func (t *TransferClient) TransferFile(sourcePath, destPath string) error {
 	return nil
 }
 
-// TransferFiles transfers multiple files (delegates to internal implementation)
-func (t *TransferClient) TransferFiles(files []types.FileTransfer) error {
-	return t.internal.doTransferFiles(files)
+// TransferFiles transfers multiple files (delegates to transfer implementation)
+func (t *transferClient) TransferFiles(files []types.FileTransfer) error {
+	return t.transfer.doTransferFiles(files)
 }
 
-// Close closes the transfer client
-func (t *TransferClient) Close() error {
-	return t.internal.close()
+// Close closes the SSH connection
+func (t *transferClient) Close() error {
+	return t.fileOps.Close()
 }
 
-// FileExists checks if a file exists on the destination
-func (t *TransferClient) FileExists(path string) (bool, error) {
-	return t.internal.fileExists(path)
+// GetFileSize gets the size of a file on the destination (via SSH)
+func (t *transferClient) GetFileSize(path string) (int64, error) {
+	return t.fileOps.GetFileSize(path)
 }
 
-// GetFileSize gets the size of a file on the destination
-func (t *TransferClient) GetFileSize(path string) (int64, error) {
-	return t.internal.getFileSize(path)
+// DeleteFile deletes a file on the destination (via SSH)
+func (t *transferClient) DeleteFile(path string) error {
+	return t.fileOps.DeleteFile(path)
 }
 
-// DeleteFile deletes a file on the destination
-func (t *TransferClient) DeleteFile(path string) error {
-	return t.internal.deleteFile(path)
+// ListDirectoryContents lists directory contents on the destination (via SSH)
+func (t *transferClient) ListDirectoryContents(rootPath string) ([]string, error) {
+	return t.fileOps.ListDirectoryContents(rootPath)
 }
 
-// ListDirectoryContents lists directory contents on the destination
-func (t *TransferClient) ListDirectoryContents(rootPath string) ([]string, error) {
-	return t.internal.listDirectoryContents(rootPath)
-}
+// ensureDestinationDir creates the destination directory using SSH
+func (t *transferClient) ensureDestinationDir(destPath string) error {
+	destDir := filepath.Dir(destPath)
 
-// MapSourcePathToLocal maps source path to local path
-func (t *TransferClient) MapSourcePathToLocal(sourcePath string) (string, error) {
-	return t.internal.mapSourcePathToLocal(sourcePath)
-}
-
-// MapLocalPathToDest maps local path to destination path
-func (t *TransferClient) MapLocalPathToDest(localPath string) (string, error) {
-	return t.internal.mapLocalPathToDest(localPath)
+	// Use SSH to create the directory
+	return t.fileOps.CreateDirectory(destDir)
 }
 
 // GetOptimalTransferMethod returns the recommended transfer method based on system capabilities
@@ -171,14 +177,14 @@ func GetOptimalTransferMethod(log *logger.Logger) TransferMethod {
 		return TransferMethodRsync
 	}
 
-	log.Info("rsync not available - falling back to SFTP transfers")
-	return TransferMethodSFTP
+	log.Info("rsync not available - falling back to SCP transfers")
+	return TransferMethodSCP
 }
 
-// ForceTransferMethod forces a specific transfer method (useful for testing)
-func ForceTransferMethod(method TransferMethod, log *logger.Logger) TransferMethod {
+// ForceTransferMethod forces a specific transfer method and creates a transfer client (useful for testing)
+func ForceTransferMethod(method TransferMethod, cfg *config.Config, log *logger.Logger) (FileTransferrer, error) {
 	log.WithField("forced_method", string(method)).Info("Using forced transfer method")
-	return method
+	return NewTransferrer(method, cfg, log)
 }
 
 // IsRsyncAvailable checks if rsync is installed and available locally

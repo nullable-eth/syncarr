@@ -34,10 +34,10 @@ services:
       DEST_PLEX_TOKEN: "your-destination-plex-token"
       
       # SSH Configuration (choose password OR key-based auth)
-      OPT_SSH_USER: "your-ssh-user"
-      OPT_SSH_PASSWORD: "your-ssh-password"  # For password auth
-      # OPT_SSH_KEY_PATH: "/keys/id_rsa"     # For key-based auth
-      OPT_SSH_PORT: "22"
+      SSH_USER: "your-ssh-user"
+      SSH_PASSWORD: "your-ssh-password"  # For password auth
+      # SSH_KEY_PATH: "/keys/id_rsa"     # For key-based auth
+      SSH_PORT: "22"
       
       # Sync Configuration
       SYNC_LABEL: "Sync2Secondary"           # Label to identify content to sync
@@ -46,13 +46,15 @@ services:
       DRY_RUN: "false"                       # Set to "true" for testing
       
       # Path Mapping
-      SOURCE_REPLACE_FROM: "/data/Media"     # Source path prefix to replace
-      SOURCE_REPLACE_TO: "/media/source"     # Local container path
+      SOURCE_REPLACE_FROM: "/data/Media"     # Source path prefix to strip for destination
+      SOURCE_REPLACE_TO: "/media/source"     # Local container path (or leave empty for same-volume mounting)
       DEST_ROOT_DIR: "/mnt/data"             # Destination server root path
     
     volumes:
       # Mount your media directories (adjust paths as needed)
       - "/path/to/your/media:/media/source:ro"  # Read-only source media
+      # Alternative: Same-volume mounting (leave SOURCE_REPLACE_TO empty)
+      # - "/data/Media:/data/Media:ro"
       
       # For SSH key authentication (uncomment if using keys)
       # - "/path/to/ssh/keys:/keys:ro"
@@ -129,12 +131,12 @@ services:
 
 | Variable | Description | Example | Required |
 |----------|-------------|---------|----------|
-| `OPT_SSH_USER` | SSH username | `mediauser` | ✅ |
-| `OPT_SSH_PASSWORD` | SSH password (for password auth) | `secretpass` | ❌* |
-| `OPT_SSH_KEY_PATH` | SSH private key path (for key auth) | `/keys/id_rsa` | ❌* |
-| `OPT_SSH_PORT` | SSH port | `22` | ❌ |
+| `SSH_USER` | SSH username | `mediauser` | ✅ |
+| `SSH_PASSWORD` | SSH password (for password auth) | `secretpass` | ❌* |
+| `SSH_KEY_PATH` | SSH private key path (for key auth) | `/keys/id_rsa` | ❌* |
+| `SSH_PORT` | SSH port | `22` | ❌ |
 
-*Either password or key path is required
+*Either password or key path is required. Password auth requires `sshpass` to be installed for both SCP and rsync transfers.
 
 ### Sync Configuration
 
@@ -150,8 +152,8 @@ services:
 
 | Variable | Description | Example | Required |
 |----------|-------------|---------|----------|
-| `SOURCE_REPLACE_FROM` | Source path prefix to replace | `/data/Media` | ❌ |
-| `SOURCE_REPLACE_TO` | Container path for source media | `/media/source` | ❌ |
+| `SOURCE_REPLACE_FROM` | Source path prefix to strip for destination mapping | `/data/Media` | ❌ |
+| `SOURCE_REPLACE_TO` | Container path for source media (leave empty for same-volume mounting) | `/media/source` | ❌ |
 | `DEST_ROOT_DIR` | Destination server root directory | `/mnt/data` | ✅ |
 
 </details>
@@ -407,8 +409,8 @@ We welcome contributions! Here's how to get started:
 - Verify SSH credentials are correct
 - Ensure SSH user has access to destination paths
 - Test SSH connection manually: `ssh user@destination-server`
-- For password auth: Ensure `OPT_SSH_PASSWORD` is set
-- For key auth: Ensure private key is mounted and `OPT_SSH_KEY_PATH` is correct
+- For password auth: Ensure `SSH_PASSWORD` is set and `sshpass` is installed
+- For key auth: Ensure private key is mounted and `SSH_KEY_PATH` is correct
 
 ### Rsync Not Found
 
