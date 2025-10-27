@@ -186,7 +186,7 @@ jobs:
           GOOS=darwin GOARCH=arm64 go build -ldflags "${LDFLAGS}" -o syncarr-darwin-arm64 ./cmd/syncarr
 
       - name: Upload build artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: syncarr-binaries
           path: syncarr-*
